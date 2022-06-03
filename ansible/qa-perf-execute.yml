@@ -1,0 +1,80 @@
+---
+- name: Distribute and Execute QA Performance container
+  hosts: acadia_node
+  gather_facts: no
+  become: yes
+  become_user: root
+  vars:
+    expected_images:
+      -  genctl-acadia/platform-qa:latest
+  tasks:
+    - name: Distribute and Execute QA Performance container
+      block:
+        - name: Copy local registry file to nodes
+          copy:
+            src: /bin/qa-containers.tgz
+            dest: /var/lib/acadia/qa-containers.tgz
+          register: containers_state
+
+        - name: Collect local image info for expected containers
+          community.docker.docker_image_info:
+            name: "{{ expected_images }}"
+          changed_when: true == false
+          register: local_images
+
+        - name: import containers locally
+          community.docker.docker_image_load:
+            path: /var/lib/acadia/qa-containers.tgz
+          register: import_containers
+          when: expected_images | length != local_images['images'] | length
+
+        - name: create directory
+          file:
+            path: /tmp/qa_tmp
+            state: directory
+
+        - name: Create temporary file
+          ansible.builtin.tempfile:
+            path: /tmp/qa_tmp
+            state: directory
+            suffix: temp
+          register: tempfile_1
+
+        - name: Execute QA Performance container
+          docker_container:
+            name: qa-Performance
+            image: genctl-acadia/platform-qa-performance:latest
+            state: started
+            network_mode: host
+            detach: false
+            command: "-N '{{ inventory_hostname_short }} performance results' --outputdir /performance_output/ /performance"
+            volumes:
+              - /etc:/host/etc:ro
+              - /dev:/host/dev:ro
+              - /proc:/host/proc:ro
+              - /sys:/host/sys:ro
+              - /var/lib/acadia:/host/var/lib/acadia:ro
+              - /var/lib/ceph:/host/var/lib/ceph:ro
+              - /var/log/ceph:/host/var/log/ceph:ro
+              - "{{ tempfile_1.path }}:/performance_output"
+          ignore_errors: true
+          register: docker_content
+
+        - name: QA Status
+          debug:
+            msg: "{{ docker_content.container.Output.split('\n') }}"
+
+        - name: Collect artifacts
+          fetch:
+            src: "{{ tempfile_1.path }}/{{ item }}"
+            dest: "/var/acadia-data/results/{{ inventory_hostname }}/{{ item }}"
+            flat: yes
+          with_items:
+            - output.xml
+            - report.html
+            - log.html
+      always:
+        - name: Cleanup Temp
+          file:
+            state: absent
+            path: /tmp/qa_tmp

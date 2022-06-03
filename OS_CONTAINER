@@ -1,0 +1,2 @@
+OS_IMAGE=wcp-acadia-team-docker-virtual.artifactory.swg-devops.com/genctl-acadia/acadia-platform
+OS_VERSION=0.1.0.build-1022

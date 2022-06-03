@@ -1,0 +1,23 @@
+---
+- name: Setup QA test environment
+  hosts: acadia_node 
+  become: yes
+  become_user: root
+  gather_facts: yes
+  gather_subset:
+    - '!all'
+    - 'local'
+  tasks:
+    - name: Remove QA test user
+      command: "{{ CEPH_ADM_SHELL }} ceph auth del client.qa-client"
+      delegate_to: "{{ acadia_leader }}"
+      when: MZONE in groups['cicd']
+
+    - name: Remove QA directory
+      file:
+        path: /var/lib/acadia/qa
+        owner: "{{ CEPH_CONTAINER_USER }}"
+        group: "{{ CEPH_CONTAINER_GROUP }}"
+        mode: 0750
+        state: absent
+      when: MZONE in groups['cicd']

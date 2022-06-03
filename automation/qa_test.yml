@@ -1,0 +1,20 @@
+---
+- !ansible_play:
+  name: QA Smoke Test - setup
+  description: "QA Smoke Test - setup"
+  play: '/qa/ansible/qa-setup.yml'
+
+- !ansible_play:
+  name: QA Read Zabbix creds
+  description: "QA Read Zabbix creds"
+  play: '/qa/ansible/setup-vault-token-read-zabbix-creds.yml'
+
+- !ansible_play:
+  name: QA Smoke Test
+  description: "QA Smoke Test"
+  play: '/qa/ansible/qa-execute.yml'
+
+- !ansible_play:
+  name: QA Smoke Test - teardown
+  description: "QA Smoke Test"
+  play: '/qa/ansible/qa-teardown.yml'

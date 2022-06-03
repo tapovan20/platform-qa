@@ -1,0 +1,57 @@
+---
+- name: Setup QA test environment
+  hosts: acadia_node
+  become: yes
+  become_user: root
+  gather_facts: yes
+  gather_subset:
+    - '!all'
+    - 'local'
+  tasks:
+
+    - name: Create QA test user
+      command: "{{ CEPH_ADM_SHELL }} ceph auth get-or-create-key client.qa-client mds 'allow *' mon 'allow *' osd 'allow *' mgr 'allow *'"
+      register: qa_key
+      delegate_to: "{{ acadia_leader }}"
+      run_once: true
+      when: MZONE in groups['cicd']
+
+    - name: Setup environment
+      block:
+        - name: Create QA directory
+          file:
+            path: /var/lib/acadia/qa
+            owner: "{{ CEPH_CONTAINER_USER }}"
+            group: "{{ CEPH_CONTAINER_GROUP }}"        
+            mode: 0750
+            state: directory
+    
+        - name: Copy QA keyring file
+          vars:
+            keyring: "{{ qa_key.stdout }}"
+          block:
+            - name: Create file
+              template:
+                src: "client.qa-client.keyring.j2"
+                dest: /var/lib/acadia/qa/ceph.client.qa-client.keyring
+                mode: 0600
+                owner: "{{ CEPH_CONTAINER_USER }}"
+                group: "{{ CEPH_CONTAINER_GROUP }}"
+          when:
+            - (qa_key is defined)
+            - (qa_key | length != 0)
+    
+        - name: Create QA ceph.conf
+          vars:
+            this_host: "{{ groups['acadia_monitor'] | map('extract', hostvars) | selectattr('hostname', 'equalto', inventory_hostname_short) | first }}"
+            this_host_ip: "{{ this_host.fabricIP }}"
+            mon_hosts: "{{ groups['acadia_monitor'] | map('extract', hostvars, 'fabricIP') | list }}"
+            v2_port: "{{ MON_HOST_V2_PORT }}"
+            fsids: "{{ ansible_local['acadia_ceph'] | map(attribute='fsid') | unique | list }}"
+          template:
+            src: "ceph.conf.j2"
+            dest: "/var/lib/acadia/qa/ceph.conf"
+            mode: 0644
+            owner: "{{ CEPH_CONTAINER_USER }}"
+            group: "{{ CEPH_CONTAINER_GROUP }}"
+      when: MZONE in groups['cicd'] 

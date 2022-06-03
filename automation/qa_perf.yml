@@ -1,0 +1,15 @@
+---
+- !ansible_play:
+  name: QA Smoke Test - setup
+  description: "QA Performance Test - setup"
+  play: '/qa/ansible/qa-setup.yml'
+
+- !ansible_play:
+  name: QA Performance Test
+  description: "QA Performance Test"
+  play: '/qa/ansible/qa-perf-execute.yml'
+
+- !ansible_play:
+  name: QA Smoke Test - teardown
+  description: "QA Performance Test"
+  play: '/qa/ansible/qa-teardown.yml'

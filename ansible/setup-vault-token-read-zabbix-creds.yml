@@ -1,0 +1,135 @@
+---
+- name: Configure Vault
+  hosts: acadia_leader_group
+  gather_facts: no
+  connection: local
+  tasks:
+
+    - name: Create JWT pem
+      vars:
+        jwt_uri: "v1/jwt-auth/data"
+        key_uri: "validation-keys/private"
+      uri:
+        url: "{{ VAULT_URI }}/{{ jwt_uri }}/{{ REGION_ENV }}/{{ key_uri }}"
+        ca_path: "{{ CA_PATH }}"
+        validate_certs: "{{ VAULT_CERT_ENFORCE }}"
+        headers:
+          X-Vault-Namespace: "{{ VAULT_NAMESPACE }}/"
+          X-Vault-Request: "true"
+          X-Vault-Token: "{{ VAULT_TOKEN }}"
+      register: jwt_pem
+
+    - name: Save temporary pem
+      vars:
+        vault_data: "{{ jwt_pem.json }}"
+      copy:
+        content: "{{ vault_data['data']['data']['current-key']['key'] }}"
+        dest: '/tmp/private.pem'
+        mode: 0600
+        owner: root
+        group: root
+
+    - name: Create ceph jwt cluster
+      vars:
+        reg: "{{ REGION_ENV | dirname }}"
+        env: "{{ REGION_ENV | basename }}"
+      command:
+        cmd: cephjwt createToken clusters "{{ reg }}" "{{ env }}"
+        chdir: /tmp
+      register: ceph_jwt
+
+    - name: Save jwt token
+      copy:
+        content: "{{ ceph_jwt.stdout }}"
+        dest: /etc/vault/ceph.jwt
+        mode: 0600
+        owner: root
+        group: root
+
+    - name: Create JWT Vault Token
+      vars:
+        jwt_uri: "v1/auth/jwt"
+        key_uri: "login"
+      uri:
+        url: "{{ VAULT_URI }}/{{ jwt_uri }}/{{ REGION_ENV }}/{{ key_uri }}"
+        ca_path: "{{ CA_PATH }}"
+        validate_certs: "{{ VAULT_CERT_ENFORCE }}"
+        method: POST
+        body_format: json
+        headers:
+          X-Vault-Namespace: "{{ VAULT_NAMESPACE }}/"
+        body:
+          role: "{{ VAULT_JWT_ROLE }}"
+          jwt: "{{ lookup('file','/etc/vault/ceph.jwt') }}"
+      register: jwt_vault
+
+    - name: Copy JWT Vault Token to /etc/vault/token
+      ansible.builtin.copy:
+        content: "{{ jwt_vault | json_query('*.auth.client_token | [0]') }}"
+        dest: /etc/vault/token
+
+    - name: Create JWT Vault Token for Platform
+      vars:
+        jwt_uri: "v1/auth/jwt"
+        key_uri: "login"
+      uri:
+        url: "{{ VAULT_URI }}/{{ jwt_uri }}/{{ REGION_ENV }}/{{ key_uri }}"
+        ca_path: "{{ CA_PATH }}"
+        validate_certs: "{{ VAULT_CERT_ENFORCE }}"
+        method: POST
+        body_format: json
+        headers:
+          X-Vault-Namespace: "{{ VAULT_NAMESPACE }}/"
+        body:
+          role: "{{ VAULT_PLATFORM_JWT_ROLE }}"
+          jwt: "{{ lookup('file','/etc/vault/ceph.jwt') }}"
+      register: jwt_platform_vault
+
+    - name: Copy JWT Vault Platform Token to /etc/vault/platform_token
+      ansible.builtin.copy:
+        content: "{{ jwt_platform_vault | json_query('*.auth.client_token | [0]') }}"
+        dest: /etc/vault/platform_token
+
+    - name: Read Zabbix credentials
+      vars:
+        VAULT_TOKEN: "{{ lookup('file', '/etc/vault/platform_token') }} "
+      uri:
+        url: "{{ ZABBIX_VAULT_URI }}"
+        ca_path: "{{ undercloud['services']['vault']['credentials'] }}"
+        validate_certs: "{{ VAULT_CERT_ENFORCE }}"
+        headers:
+          X-Vault-Namespace: "{{ VAULT_NAMESPACE }}/"
+          X-Vault-Request: "true"
+          X-Vault-Token: "{{ VAULT_TOKEN }}"
+        status_code: [ 200 ]
+      register: zabbix_cert
+      delegate_to: localhost
+
+- name: Copy zabbix creds
+  hosts: acadia_node
+  gather_facts: no
+  become: yes
+  become_user: root
+  tasks:
+    - name: create directory
+      file:
+        path: /tmp/qa_tmp
+        state: directory
+
+    - name: create empty cred file
+      file:
+        path: /tmp/qa_tmp/platform_qa.env
+        state: touch
+
+    - name: Copy required info to /tmp/qa_tmp/platform_qa.env
+      no_log: true
+      lineinfile:
+        path: /tmp/qa_tmp/platform_qa.env
+        state: present
+        line: "{{ item }}"
+      with_items:
+        - "zabbix_endpoint={{hostvars[groups['acadia_leader_group'][0]]['undercloud']['services']['zabbix_endpoint']['addresses'][0]}}"
+        - "zabbix_key={{hostvars[groups['acadia_leader_group'][0]]['zabbix_cert']['json']['data']['data']['key']}}"
+        - "zabbix_user={{hostvars[groups['acadia_leader_group'][0]]['zabbix_cert']['json']['data']['data']['user']}}"
+        - "mzone={{hostvars[groups['acadia_leader_group'][0]]['MZONE']}}"
+        - "mzone_nodes={{hostvars[groups['acadia_leader_group'][0]]['groups']['acadia_node']}}"
